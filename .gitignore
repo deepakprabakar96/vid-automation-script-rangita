@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# super/ is a drop zone: ship the empty folder, never its contents.
+# Source clips, music tracks and generated *-CV.mp4 files all stay local.
+super/*
+!super/.gitkeep
