@@ -39,7 +39,8 @@ super/
         3.mp4
 ```
 
-Name the outfit folders whatever you like. The clips must be named exactly `1`, `2`, `3`.
+Name the outfit folders whatever you like. The clips must be named exactly `1`, `2`, `3`, and
+they play in that order unless you pass `--clip-order` (see below).
 
 **2. Run it:**
 
@@ -70,6 +71,26 @@ super/linen_shirt/linen_shirt-CV.mp4
 
 # collect every compilation in one folder instead of alongside the clips
 … compile_outfits.py super --output-dir ./exports
+
+# play the clips back to front: 3, 2, 1
+… compile_outfits.py super --clip-order reverse
+
+# shuffle each outfit's clips; --seed makes the shuffle repeatable
+… compile_outfits.py super --clip-order random --seed 7
+```
+
+## Clip order
+
+By default clip `1` plays, then `2`, then `3` — the order you chose when you named them.
+`--clip-order reverse` flips that to `3, 2, 1`, and `--clip-order random` shuffles every outfit
+separately, so a batch doesn't fall into the same rhythm each time.
+
+Random ordering picks fresh each run. Add `--seed N` to lock it in: the same seed over the same
+folders always produces the same orders, so a batch you like can be rebuilt exactly. Without a
+seed, the order is only recorded in that run's log. Each outfit's line shows what was used:
+
+```
+  navy_blazer: ['3.mp4', '1.mp4', '2.mp4'] (random)
 ```
 
 ## How the music is divided

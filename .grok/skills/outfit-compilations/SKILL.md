@@ -1,6 +1,6 @@
 ---
 name: outfit-compilations
-description: Build 6-second outfit compilation videos with background music from folders of clips. Use when the user wants to compile outfit clips, build compilations or reels from a shoot, add music to outfit videos, or run compile_outfits.py. Handles the setup, the folder structure, preparing raw camera files, and verifying the output.
+description: Build 6-second outfit compilation videos with background music from folders of clips. Use when the user wants to compile outfit clips, build compilations or reels from a shoot, add music to outfit videos, shuffle/reverse/randomise the order clips play in, or run compile_outfits.py. Handles the setup, the folder structure, clip ordering, preparing raw camera files, and verifying the output.
 ---
 
 # Outfit compilations
@@ -24,6 +24,25 @@ Users drop their outfit folders and audio tracks into `super/`, then:
 
 Outputs land as `super/<outfit>/<outfit>-CV.mp4`.
 
+## Clip ordering
+
+Clips play in filename order (`1`, `2`, `3`) unless told otherwise. `--clip-order` changes it:
+
+```bash
+… compile_outfits.py super --clip-order reverse            # 3 → 2 → 1
+… compile_outfits.py super --clip-order random             # shuffled per outfit
+… compile_outfits.py super --clip-order random --seed 7    # shuffled, reproducible
+```
+
+`random` shuffles each outfit independently, so outfits in one run differ from each other.
+Always add `--seed N` when the user might want the result re-created, and tell them the seed —
+without one the ordering is unrecoverable after the run. (`--seed` errors out with any mode
+other than `random`.)
+
+Clip order is an editorial decision. Keep the default unless the user asks for something else,
+and if they want "a different order" without saying which, ask rather than picking one. `AGENTS.md`
+has the full table of modes and when each fits.
+
 ## Before running
 
 - Confirm `ffmpeg` and `ffprobe` are on PATH.
@@ -40,3 +59,7 @@ editorial decision.
 
 Report the per-outfit track and offset from the log, and run the audio-hash check in
 `AGENTS.md` to confirm the compilations genuinely differ rather than only appearing to.
+
+Each outfit line also ends with the order its clips were cut in — e.g.
+`outfit_01: ['3.mp4', '1.mp4', '2.mp4'] (random)`. Report that too whenever `--clip-order` was
+used, along with the seed, so the user can reproduce or reject the result.

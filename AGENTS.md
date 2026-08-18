@@ -38,8 +38,9 @@ super/
 Hard requirements — the script refuses anything else:
 
 - Each outfit folder has clips whose filenames are exactly `1`, `2`, `3` (any of `.mp4`,
-  `.mov`, `.m4v`, `.avi`, `.mkv`). The number is the order they appear in the compilation.
-  Other files in the folder are ignored, so previously generated `-CV.mp4` files are harmless.
+  `.mov`, `.m4v`, `.avi`, `.mkv`). The number is the order they appear in the compilation,
+  unless `--clip-order` says otherwise. Other files in the folder are ignored, so previously
+  generated `-CV.mp4` files are harmless.
 - At least one audio file sits **directly** in `super/`, not inside an outfit folder
   (`.mp3`, `.m4a`, `.wav`, `.aac`, `.flac`).
 - Outfit folders are processed in alphabetical order.
@@ -83,9 +84,37 @@ Options:
 | `--skip-intro SECONDS` | `6` | Leave this much off the head of every track |
 | `--skip-outro SECONDS` | `6` | Leave this much off the tail of every track |
 | `--output-dir DIR` | alongside each outfit folder | Write all compilations into one directory instead |
+| `--clip-order {sequential,reverse,random}` | `sequential` | Order the clips play in within each compilation |
+| `--seed N` | none | Seed for `--clip-order random`, so a shuffle can be reproduced |
 
 The script can also be pointed at a single outfit folder rather than a superfolder, in which
 case pass the track explicitly with `--music`.
+
+## Clip ordering
+
+By default the clips play in filename order — `1`, then `2`, then `3` — so the numbering the
+user chose when preparing the folder is the cut they get. `--clip-order` changes that:
+
+| Value | Playback order | When to use it |
+| --- | --- | --- |
+| `sequential` (default) | 1 → 2 → 3 | The deliberate edit: wide, mid, close-up detail |
+| `reverse` | 3 → 2 → 1 | Open on the detail shot and pull out to the full look |
+| `random` | shuffled per outfit | Variety across a large batch, where no single order is meant |
+
+`random` shuffles **each outfit independently**, so two outfits in the same run usually get
+different orders. Without `--seed` every run reshuffles; with `--seed N` the whole batch is
+reproducible — the same seed, superfolder, and outfit set always yields the same orders. Pass
+the seed whenever a result might need re-creating, and record it alongside the output.
+
+`--seed` is rejected with any other `--clip-order`, since it would have no effect.
+
+Ordering is applied *after* clips are matched to the `1`/`2`/`3` contract, so it never changes
+which clips are used or which window is picked from each — only the sequence they are cut in.
+The chosen order is echoed per outfit in the log, e.g.
+`outfit_01: ['3.mp4', '1.mp4', '2.mp4'] (random)`.
+
+Note that clip order is an editorial decision. Do not reach for `random` or `reverse` on a
+user's behalf — use the default unless they asked for something else.
 
 ## How music is assigned
 
@@ -151,11 +180,16 @@ window anyway.
 The log prints, per outfit, the window chosen from each clip and the track and offset used:
 
 ```
-  outfit_01: ['1.mp4', '2.mp4', '3.mp4']
+Clip order: sequential
+  outfit_01: ['1.mp4', '2.mp4', '3.mp4'] (sequential)
     1.mp4: best window starts at 0.48s
     music: track_a.mp3 @ 6.0s
     -> super/outfit_01/outfit_01-CV.mp4
 ```
+
+The bracketed list is the actual playback order, so with `--clip-order` it doubles as the
+check that the requested ordering took effect. Report it back to the user along with the seed
+when the run was random.
 
 To confirm the music slices really are distinct rather than merely logged as distinct, hash the
 audio of each output — every digest should differ:
@@ -187,6 +221,9 @@ Expect `video`, `audio`, and a duration of about 6 seconds.
 | `ffmpeg not found on PATH` | Install ffmpeg (`brew install ffmpeg`). |
 | `ModuleNotFoundError: No module named 'cv2'` | Run via `.venv/bin/python`, or create the venv per "Setup". |
 | `Note: N outfit folder(s) but only M distinct slice(s) …` | Informational — some outfits will reuse a slice. Add more or longer tracks to avoid. |
+| `--seed only applies to --clip-order random.` | `--seed` was passed without `--clip-order random`. Add it, or drop the seed. |
+| `argument --clip-order: invalid choice` | Only `sequential`, `reverse`, and `random` are accepted. |
+| A random run can't be reproduced | It was run without `--seed`; the order is gone. Re-run with a seed to lock future batches. |
 
 ## Working on the script itself
 
@@ -196,15 +233,23 @@ knowing:
 - `find_best_window` — scores frames for sharpness (variance of Laplacian) and motion
   (frame-to-frame difference), then picks the best 2s window. `MOTION_WEIGHT` at the top trades
   steadiness against sharpness.
-- `find_clips` — enforces the `1`/`2`/`3` naming contract.
+- `find_clips` — enforces the `1`/`2`/`3` naming contract, always returning filename order.
+- `order_clips` — applies `--clip-order` to that list. Pure and side-effect free; `random` draws
+  from a single `random.Random` created in `main`, so one seed governs a whole batch while each
+  outfit still shuffles independently. New ordering modes go here plus `CLIP_ORDERS`.
 - `find_music` / `plan_music_slots` / `build_music_plan` / `pick_slice` — track discovery and
   the slot-rotation arithmetic. `pick_slice` is pure arithmetic and is the place to change
   assignment behaviour.
 - `cut_clip` / `concat_clips` / `add_music` — the ffmpeg calls.
 
 Tunable constants sit together at the top of the file: `CLIP_SECONDS`, `DEFAULT_SKIP_SECONDS`,
-the fade lengths, and the analysis parameters.
+`CLIP_ORDERS` / `DEFAULT_CLIP_ORDER`, the fade lengths, and the analysis parameters.
 
 After any change, re-run on a superfolder with at least two outfits and two tracks, and repeat
 the audio-hash check above — rotation bugs tend to look correct in the log while producing
 identical audio.
+
+Ordering changes need the same distrust of the log: verify the rendered file, not just the
+printed list. Build fixture clips whose *content* identifies them (a distinct tone or a big
+number burned into each), run every mode, and confirm the output plays them in the logged
+order. Also re-run `--clip-order random --seed N` twice and diff the logs — they must match.

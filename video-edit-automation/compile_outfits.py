@@ -20,6 +20,10 @@ For each clip, the script scores a sliding 2-second window for sharpness
 (in-focus) and stability (low motion/shake), picks the best window, cuts it,
 and hard-cuts the three windows together into a 6-second compilation.
 
+Clips play in filename order (1, 2, 3) by default. --clip-order reverse flips
+that to 3, 2, 1, and --clip-order random shuffles each outfit independently —
+pass --seed to make the shuffle reproducible.
+
 Each track is divided into 6-second slots, and outfits rotate across the tracks
 before advancing down them: with 6 tracks, outfits 1-6 take the first slot of
 each track, outfits 7-12 the second slot, and so on. The first --skip-intro and
@@ -34,9 +38,12 @@ Usage:
     python compile_outfits.py /path/to/superfolder --no-music
     python compile_outfits.py /path/to/superfolder --music other_track.mp3
     python compile_outfits.py /path/to/superfolder --output-dir /path/to/out
+    python compile_outfits.py /path/to/superfolder --clip-order reverse
+    python compile_outfits.py /path/to/superfolder --clip-order random --seed 7
 """
 
 import argparse
+import random
 import shutil
 import subprocess
 import sys
@@ -53,6 +60,11 @@ CLIP_SECONDS = 2.0
 # (previous compilations, stray files) is ignored.
 CLIP_STEMS = ("1", "2", "3")
 COMPILATION_SECONDS = len(CLIP_STEMS) * CLIP_SECONDS
+# How the clips of one outfit are ordered in the compilation. "sequential" is
+# filename order (1, 2, 3); "reverse" is 3, 2, 1; "random" shuffles each outfit
+# independently.
+CLIP_ORDERS = ("sequential", "reverse", "random")
+DEFAULT_CLIP_ORDER = "sequential"
 # Seconds trimmed off the head and tail of the track before it is divided into
 # slots, so outfits don't land on an intro fade-in or a trailing outro.
 DEFAULT_SKIP_SECONDS = 6.0
@@ -285,14 +297,36 @@ def find_clips(folder: Path):
     return [by_stem[s] for s in CLIP_STEMS]
 
 
+def order_clips(clips, clip_order: str, rng: random.Random):
+    """Return the clips in playback order for the given --clip-order mode.
+
+    `clips` arrives in filename order. "random" draws from `rng`, so one seeded
+    generator shared across the run keeps a whole batch reproducible while still
+    shuffling each outfit independently.
+    """
+    if clip_order == "sequential":
+        return list(clips)
+    if clip_order == "reverse":
+        return list(reversed(clips))
+    if clip_order == "random":
+        shuffled = list(clips)
+        rng.shuffle(shuffled)
+        return shuffled
+    raise ValueError(f"Unknown clip order: {clip_order}")
+
+
 def process_outfit_folder(folder: Path, output_dir: Path, music: Path = None,
-                          music_offset: float = 0.0) -> bool:
+                          music_offset: float = 0.0,
+                          clip_order: str = DEFAULT_CLIP_ORDER,
+                          rng: random.Random = None) -> bool:
     """Build one compilation. Returns True if a file was written."""
     clips = find_clips(folder)
     if clips is None:
         return False
 
-    print(f"  {folder.name}: {[c.name for c in clips]}")
+    clips = order_clips(clips, clip_order, rng or random.Random())
+
+    print(f"  {folder.name}: {[c.name for c in clips]} ({clip_order})")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -330,6 +364,10 @@ def main():
                          help=f"Seconds of the track's head to leave unused (default: {DEFAULT_SKIP_SECONDS:.0f})")
     parser.add_argument("--skip-outro", type=float, default=DEFAULT_SKIP_SECONDS,
                          help=f"Seconds of the track's tail to leave unused (default: {DEFAULT_SKIP_SECONDS:.0f})")
+    parser.add_argument("--clip-order", choices=CLIP_ORDERS, default=DEFAULT_CLIP_ORDER,
+                         help=f"Order the clips play in within each compilation (default: {DEFAULT_CLIP_ORDER})")
+    parser.add_argument("--seed", type=int, default=None,
+                         help="Seed for --clip-order random, so the same shuffle can be reproduced")
     args = parser.parse_args()
 
     for tool in ("ffmpeg", "ffprobe"):
@@ -343,6 +381,8 @@ def main():
             sys.exit(f"Music file not found: {track}")
     if args.skip_intro < 0 or args.skip_outro < 0:
         sys.exit("--skip-intro and --skip-outro must be zero or positive.")
+    if args.seed is not None and args.clip_order != "random":
+        sys.exit("--seed only applies to --clip-order random.")
 
     root = args.path
     if not root.is_dir():
@@ -371,12 +411,20 @@ def main():
             print(f"Note: {len(outfit_folders)} outfit folder(s) but only {distinct} "
                   f"distinct slice(s) before the shortest track wraps; some slices repeat.")
 
+    rng = random.Random(args.seed)
+    if args.clip_order == "random":
+        seed_note = f"seed {args.seed}" if args.seed is not None else "unseeded"
+        print(f"Clip order: random ({seed_note})")
+    else:
+        print(f"Clip order: {args.clip_order}")
+
     print(f"Processing {len(outfit_folders)} outfit folder(s)...")
     built = 0
     for folder in outfit_folders:
         out_dir = args.output_dir or folder
         music, offset = pick_slice(plan, built) if plan else (None, 0.0)
-        if process_outfit_folder(folder, out_dir, music, offset):
+        if process_outfit_folder(folder, out_dir, music, offset,
+                                 args.clip_order, rng):
             built += 1
 
     print(f"Done. Built {built} compilation(s).")
