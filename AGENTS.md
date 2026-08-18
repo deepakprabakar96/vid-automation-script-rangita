@@ -14,7 +14,11 @@ hard-cuts those three windows together into a **6-second video**, and lays a sli
 background music underneath. Each outfit gets a *different* slice of music, so a batch of
 compilations doesn't sound repetitive.
 
-Output lands next to the source clips as `<outfit_name>-CV.mp4`.
+Output collects in `super/compilations/` as `<outfit_name>-CV.mp4`.
+
+A companion script, `video-edit-automation/prepare_clips.py`, sits in front of it and turns
+whatever naming convention the footage arrives in into the `1`/`2`/`3` contract below. See
+"Preparing messy input".
 
 ## The folder contract
 
@@ -33,6 +37,7 @@ super/
         1.mp4
         2.mp4
         3.mp4
+    compilations/            created by the script; every <outfit>-CV.mp4 lands here
 ```
 
 Hard requirements — the script refuses anything else:
@@ -43,7 +48,10 @@ Hard requirements — the script refuses anything else:
   generated `-CV.mp4` files are harmless.
 - At least one audio file sits **directly** in `super/`, not inside an outfit folder
   (`.mp3`, `.m4a`, `.wav`, `.aac`, `.flac`).
-- Outfit folders are processed in alphabetical order.
+- Outfit folders are processed in alphabetical order. `compilations/` is skipped, so re-running
+  never treats previous output as an outfit.
+- Clips may be symlinks — that is how `prepare_clips.py` stages them, and both ffmpeg and
+  OpenCV follow them.
 
 ## Setup
 
@@ -72,8 +80,9 @@ in scripts.
 .venv/bin/python video-edit-automation/compile_outfits.py super
 ```
 
-That's the whole job for a correctly-structured `super/`. Outputs appear as
-`super/<outfit>/<outfit>-CV.mp4`.
+That's the whole job for a correctly-structured `super/`. Every compilation lands together in
+`super/compilations/<outfit>-CV.mp4`, not in the source folders. Pass `--output-alongside` to
+put each one back next to its own clips.
 
 Options:
 
@@ -83,7 +92,8 @@ Options:
 | `--no-music` | off | Skip music entirely; the clips keep their own original audio |
 | `--skip-intro SECONDS` | `6` | Leave this much off the head of every track |
 | `--skip-outro SECONDS` | `6` | Leave this much off the tail of every track |
-| `--output-dir DIR` | alongside each outfit folder | Write all compilations into one directory instead |
+| `--output-dir DIR` | `super/compilations/` | Write the compilations somewhere else |
+| `--output-alongside` | off | Write each compilation into its own outfit folder instead |
 | `--clip-order {sequential,reverse,random}` | `sequential` | Order the clips play in within each compilation |
 | `--seed N` | none | Seed for `--clip-order random`, so a shuffle can be reproduced |
 
@@ -144,6 +154,45 @@ Music replaces the clips' original audio, with a 0.25s fade-in and 0.5s fade-out
 ## Preparing messy input
 
 Footage rarely arrives in the required shape. Before running the script, get it there.
+
+**Assets in the pipeline naming schema.** The generation pipeline emits descriptive filenames
+rather than `1`/`2`/`3`:
+
+| asset | slot | example |
+| --- | --- | --- |
+| pose still | `{pose}` | `Test2_afeea_closepose_v1.jpg` |
+| first-image candidate | `fullbody_ref` | `Test2_afeea_fullbody_ref_v2.jpg` |
+| uploaded styled ref | `fullbody_ref_upload` | `Test2_afeea_fullbody_ref_upload_v1.jpg` |
+| video from a pose | `{pose}_video` | `Test2_afeea_closepose_video_v1.mp4` |
+| video from the first image | `fullbody_ref_video` | `Test2_afeea_fullbody_ref_video_v1.mp4` |
+
+`video-edit-automation/prepare_clips.py` normalises these into the `1`/`2`/`3` contract. It
+never touches the originals — it stages symlinks named `1`, `2`, `3` inside `super/`, so the
+descriptive names and the mapping both survive:
+
+```bash
+.venv/bin/python video-edit-automation/prepare_clips.py /path/to/drop            # show the mapping
+.venv/bin/python video-edit-automation/prepare_clips.py /path/to/drop --apply    # stage it
+```
+
+The rules it applies:
+
+- **Only `*_video` assets become clips.** Stills, refs and uploads are counted and ignored.
+- **One outfit per `{project}_{id}` prefix** (`Test2_afeea`), wherever in the tree the files sit.
+  Clips for one outfit can be spread across folders.
+- **Order**: `fullbody_ref_video` is clip `1`, then poses in `POSE_PRIORITY` order (`midpose`,
+  `closepose`), then any unlisted pose alphabetically. New single-token poses need no code
+  change; a new multi-token slot name needs an entry in `KNOWN_POSE_BASES`.
+- **Highest `_v{n}` wins** within a slot. OS duplicate markers (`… (1).mp4`) are recognised and
+  lose to the unsuffixed file.
+- Fewer than three clips ⇒ that outfit is reported and skipped, the rest still stage.
+- Folders already holding `1`/`2`/`3` pass through untouched, so the two conventions can arrive
+  in the same drop.
+
+It is **dry-run by default**. Show the user the printed mapping and let them confirm before
+`--apply` — the mapping decides clip order, which is editorial. `--force` is needed to re-point
+a clip that is already staged, and `--copy` writes real copies instead of symlinks (use it when
+the source volume might be unmounted later).
 
 **Clips not named 1/2/3.** Camera files land as `IMG_4821.MOV`, `DSC_0032.mp4`, etc. Decide
 the order deliberately — the convention for these compilations is wide/front shot first,
@@ -222,6 +271,11 @@ Expect `video`, `audio`, and a duration of about 6 seconds.
 | `ModuleNotFoundError: No module named 'cv2'` | Run via `.venv/bin/python`, or create the venv per "Setup". |
 | `Note: N outfit folder(s) but only M distinct slice(s) …` | Informational — some outfits will reuse a slice. Add more or longer tracks to avoid. |
 | `--seed only applies to --clip-order random.` | `--seed` was passed without `--clip-order random`. Add it, or drop the seed. |
+| `<outfit>: only N clip(s) … skipping` | `prepare_clips.py` found fewer than three `*_video` assets for that prefix. Wait for the rest, or build that outfit by hand. |
+| `CONFLICT with <name> (use --force)` | A clip is already staged pointing elsewhere — usually a newer `_v{n}` arrived. Re-run with `--force` once the new mapping looks right. |
+| `Unrecognised video files …` | Matched neither convention. Follow "Clips not named 1/2/3" below it. |
+| `No clips in either naming convention found under …` | `prepare_clips.py` was pointed at the wrong folder. |
+| `--output-dir and --output-alongside can't be used together.` | Pick one. |
 | `argument --clip-order: invalid choice` | Only `sequential`, `reverse`, and `random` are accepted. |
 | A random run can't be reproduced | It was run without `--seed`; the order is gone. Re-run with a seed to lock future batches. |
 
@@ -233,7 +287,9 @@ knowing:
 - `find_best_window` — scores frames for sharpness (variance of Laplacian) and motion
   (frame-to-frame difference), then picks the best 2s window. `MOTION_WEIGHT` at the top trades
   steadiness against sharpness.
-- `find_clips` — enforces the `1`/`2`/`3` naming contract, always returning filename order.
+- `find_clips` — enforces the `1`/`2`/`3` naming contract, always returning filename order. The
+  contract is deliberately narrow: schema knowledge lives in `prepare_clips.py`, not here, so
+  new naming conventions never reach this file.
 - `order_clips` — applies `--clip-order` to that list. Pure and side-effect free; `random` draws
   from a single `random.Random` created in `main`, so one seed governs a whole batch while each
   outfit still shuffles independently. New ordering modes go here plus `CLIP_ORDERS`.
@@ -241,6 +297,17 @@ knowing:
   the slot-rotation arithmetic. `pick_slice` is pure arithmetic and is the place to change
   assignment behaviour.
 - `cut_clip` / `concat_clips` / `add_music` — the ffmpeg calls.
+
+`video-edit-automation/prepare_clips.py` is the normalisation layer in front of it:
+
+- `parse_asset` — pulls outfit, pose, version and duplicate marker off one filename, stripping
+  them in that order (extension, ` (N)`, `_v{n}`, `_video`). Returns `None` for anything that
+  isn't a new-schema clip.
+- `group_outfits` — groups by outfit, resolves version/duplicate races via `Asset.pick_rank`,
+  and orders the winners via `Asset.pose_rank`.
+- `stage` — writes the symlinks, and is the only function that touches the filesystem; it is a
+  no-op unless `--apply` is passed.
+- `POSE_PRIORITY` and `KNOWN_POSE_BASES` at the top are what a new slot name usually needs.
 
 Tunable constants sit together at the top of the file: `CLIP_SECONDS`, `DEFAULT_SKIP_SECONDS`,
 `CLIP_ORDERS` / `DEFAULT_CLIP_ORDER`, the fade lengths, and the analysis parameters.

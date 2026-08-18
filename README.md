@@ -22,6 +22,19 @@ python3 -m venv .venv
 
 ## Use
 
+**0. If your clips aren't named `1`, `2`, `3` yet** — footage from the generation pipeline
+arrives as `Test2_afeea_fullbody_ref_video_v1.mp4` and the like. Normalise it first:
+
+```bash
+.venv/bin/python video-edit-automation/prepare_clips.py /path/to/drop            # show the mapping
+.venv/bin/python video-edit-automation/prepare_clips.py /path/to/drop --apply    # stage into super/
+```
+
+It groups everything sharing a `{project}_{id}` prefix into one outfit, puts the
+`fullbody_ref_video` first, picks the highest `_v{n}` of each slot, ignores stills, and stages
+symlinks named `1`/`2`/`3` — your originals keep their names. It prints the mapping and writes
+nothing until you pass `--apply`.
+
 **1. Put your files in `super/`** — one folder per outfit, clips named `1`, `2`, `3` in the
 order they should appear, plus one or more music tracks loose in `super/`:
 
@@ -48,12 +61,14 @@ they play in that order unless you pass `--clip-order` (see below).
 .venv/bin/python video-edit-automation/compile_outfits.py super
 ```
 
-**3. Collect the results** — each outfit folder gains a `<outfit_name>-CV.mp4`:
+**3. Collect the results** — every compilation lands together in `super/compilations/`:
 
 ```
-super/navy_blazer/navy_blazer-CV.mp4
-super/linen_shirt/linen_shirt-CV.mp4
+super/compilations/navy_blazer-CV.mp4
+super/compilations/linen_shirt-CV.mp4
 ```
+
+Pass `--output-alongside` if you'd rather each one sat next to its own clips.
 
 `super/` is yours to empty and refill whenever you want a new batch.
 
@@ -69,8 +84,11 @@ super/linen_shirt/linen_shirt-CV.mp4
 # no music; keep the clips' own audio
 … compile_outfits.py super --no-music
 
-# collect every compilation in one folder instead of alongside the clips
+# send the compilations somewhere other than super/compilations/
 … compile_outfits.py super --output-dir ./exports
+
+# put each compilation back in its own outfit folder
+… compile_outfits.py super --output-alongside
 
 # play the clips back to front: 3, 2, 1
 … compile_outfits.py super --clip-order reverse

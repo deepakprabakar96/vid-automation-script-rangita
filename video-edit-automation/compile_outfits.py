@@ -59,6 +59,11 @@ CLIP_SECONDS = 2.0
 # Clips are picked by filename stem, in this order. Anything else in the folder
 # (previous compilations, stray files) is ignored.
 CLIP_STEMS = ("1", "2", "3")
+
+# Compilations collect here inside the superfolder rather than scattering into
+# the source folders. --output-dir overrides it; --output-alongside restores the
+# old per-folder placement.
+OUTPUT_DIR_NAME = "compilations"
 COMPILATION_SECONDS = len(CLIP_STEMS) * CLIP_SECONDS
 # How the clips of one outfit are ordered in the compilation. "sequential" is
 # filename order (1, 2, 3); "reverse" is 3, 2, 1; "random" shuffles each outfit
@@ -355,7 +360,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("path", type=Path, help="Outfit folder, or parent folder of outfit folders")
     parser.add_argument("--output-dir", type=Path, default=None,
-                         help="Where to write compilations (default: alongside each outfit folder)")
+                         help=f"Where to write compilations (default: <superfolder>/{OUTPUT_DIR_NAME})")
+    parser.add_argument("--output-alongside", action="store_true",
+                         help="Write each compilation into its own outfit folder instead")
     parser.add_argument("--music", type=Path, nargs="+", default=None,
                          help="Audio file(s) to use (default: every audio file in the superfolder)")
     parser.add_argument("--no-music", action="store_true",
@@ -383,6 +390,8 @@ def main():
         sys.exit("--skip-intro and --skip-outro must be zero or positive.")
     if args.seed is not None and args.clip_order != "random":
         sys.exit("--seed only applies to --clip-order random.")
+    if args.output_dir is not None and args.output_alongside:
+        sys.exit("--output-dir and --output-alongside can't be used together.")
 
     root = args.path
     if not root.is_dir():
@@ -392,7 +401,7 @@ def main():
         p.suffix.lower() in VIDEO_EXTS and p.stem in CLIP_STEMS for p in root.iterdir()
     )
     outfit_folders = [root] if is_outfit_folder else sorted(
-        p for p in root.iterdir() if p.is_dir()
+        p for p in root.iterdir() if p.is_dir() and p.name != OUTPUT_DIR_NAME
     )
 
     if not outfit_folders:
@@ -419,9 +428,19 @@ def main():
         print(f"Clip order: {args.clip_order}")
 
     print(f"Processing {len(outfit_folders)} outfit folder(s)...")
+    # A single outfit folder keeps writing alongside itself; a superfolder
+    # collects every compilation in one place.
+    default_out = None if (is_outfit_folder or args.output_alongside) else root / OUTPUT_DIR_NAME
+
     built = 0
+    written = {}
     for folder in outfit_folders:
-        out_dir = args.output_dir or folder
+        out_dir = args.output_dir or default_out or folder
+        out_path = out_dir / f"{folder.name}-CV.mp4"
+        if out_path in written:
+            print(f"  warning: {folder.name} overwrites the compilation from "
+                  f"{written[out_path]} at {out_path}")
+        written[out_path] = folder.name
         music, offset = pick_slice(plan, built) if plan else (None, 0.0)
         if process_outfit_folder(folder, out_dir, music, offset,
                                  args.clip_order, rng):
